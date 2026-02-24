@@ -7,6 +7,7 @@ export default definePlugin({
             description: "sigma",
             run(interaction) {
                 console.log(interaction);
+                interaction.send("Yahoooo");
             },
         })
     ]

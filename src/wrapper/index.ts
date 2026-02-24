@@ -6,7 +6,7 @@ import "./child.js";
 import { createHash, randomBytes } from "node:crypto";
 
 function serialize(data: Record<string, any>) {
-    let functions: Record<string, any> = {};
+    let functions: Record<string, CallableFunction> = {};
 
     function recurse(data: Record<string, any>) {
         let cloned: Record<string, any> = {}
@@ -27,7 +27,7 @@ function serialize(data: Record<string, any>) {
         return cloned;
     }
 
-    return recurse(data);
+    return { cloned: recurse(data), functions };
 }
 
 export function wrap(pluginPath: string): Promise<Plugin | null> {
@@ -36,6 +36,8 @@ export function wrap(pluginPath: string): Promise<Plugin | null> {
             pluginPath
         }
     });
+
+    let mappedFunctions: Record<string, CallableFunction> = {};
 
     return new Promise((resolve, reject) => {
         worker.on("message", (payload) => {
@@ -46,6 +48,13 @@ export function wrap(pluginPath: string): Promise<Plugin | null> {
                         name: c.name,
                         description: c.description,
                         run(interaction: Interaction) {
+                            let { cloned, functions } = serialize(interaction);
+                            
+                            mappedFunctions = {
+                                ...mappedFunctions,
+                                ...functions
+                            }
+
                             worker?.postMessage({
                                 id: createHash("sha256").update(randomBytes(256)).digest("hex"), // Action id
                                 target: {
@@ -54,7 +63,7 @@ export function wrap(pluginPath: string): Promise<Plugin | null> {
                                     action: "call"   // Call the command
                                 },
                                 // Arguments
-                                data: serialize(interaction)
+                                data: cloned
                             })
                         }
                     }))

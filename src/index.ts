@@ -6,6 +6,7 @@ const wrapped = await wrap(path.join(process.cwd(), "dist", "test-dist", "test",
 
 wrapped?.commands[0]?.run.call(wrapped, {
     id: "123",
+
     send(any) {
         console.log(any)
     }
