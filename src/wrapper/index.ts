@@ -11,20 +11,31 @@ function serialize(data: Record<string, any>) {
     function recurse(data: Record<string, any>) {
         let cloned: Record<string, any> = {}
         for (let key in data) {
-            if (typeof data[key] == "function") {
+            if (typeof data[key] == "object") {
+                cloned[key] = recurse(data[key]);
+            } else if (typeof data[key] == "string" || typeof data[key] == "number") {
+                cloned[key] = data[key]
+            } else if (data[key] && typeof data[key] == "function") {
                 const id = createHash("sha256").update(randomBytes(256)).digest("hex");
                 cloned[key] = {
                     type: "method",
                     id
                 };
                 functions[id] = data[key]
-            } else if (typeof data[key] == "object") {
-                cloned[key] = recurse(data[key]);
-            } else if (typeof data[key] == "string" || typeof data[key] == "number") {
-                cloned[key] = data[key]
             }
         }
         return cloned;
+    }
+
+    if (
+        typeof data == "string" ||
+        typeof data == "number" ||
+        typeof data == "bigint" ||
+        typeof data == "boolean" ||
+        typeof data == "undefined" ||
+        !data
+    ) {
+        return { cloned: data, functions: {} }
     }
 
     return { cloned: recurse(data), functions };
@@ -82,7 +93,23 @@ export function wrap(pluginPath: string): Promise<Plugin | null> {
                         target = mappedFunctions[payload.target.id];
                     }
                     if (!target) return;
-                    target?.(payload.data);
+
+                    console.log("I was ran!")
+
+                    new Promise(async (resolve, reject) =>
+                        resolve(await target?.(payload.data))
+                    ).then((result: any) => {
+                        console.log(typeof result)
+                        const { cloned, functions } = serialize(result)
+                        mappedFunctions = {
+                            ...mappedFunctions,
+                            ...functions
+                        }
+                        worker.postMessage({
+                            id: payload.id,
+                            data: cloned
+                        })
+                    })
                 }
             }
         })

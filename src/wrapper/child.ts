@@ -5,34 +5,54 @@ import { createHash, randomBytes } from "node:crypto";
 
 type ExpandedCommand = (Command & { id: string, serialize: () => Record<string, any> });
 
+const awaiting = new Map<string, CallableFunction>();
+
 function deserialize(serialized: Record<string, any>): any {
     function recurse(data: Record<string, any>) {
         let deserialized: Record<string, any> = {}
 
         for (let key in data) {
-            if (typeof data[key] == "object") {
+            if (Array.isArray(data[key])) {
+                deserialized[key] = data[key]
+            } else if (typeof data[key] == "string" || typeof data[key] == "number") {
+                deserialized[key] = data[key]
+            } else if (data[key] && typeof data[key] == "object") {
                 if ("type" in data[key]) {
                     deserialized[key] = (...args: any) => {
+                        const id = createHash("sha256").update(randomBytes(256)).digest("hex");
                         parentPort?.postMessage({
-                            id: createHash("sha256").update(randomBytes(256)).digest("hex"),
+                            id,
                             target: {
                                 id: data[key].id,
                                 type: "method",
                             },
                             data: args
                         });
+
+                        return new Promise((resolve, reject) => {
+                            awaiting.set(id, (data: any) =>
+                                resolve(deserialize(data))
+                            )
+                        })
                     }
                 } else {
                     deserialized[key] = recurse(data[key])
                 }
-            } else if (typeof data[key] == "string" || typeof data[key] == "number") {
-                deserialized[key] = data[key]
-            } else if (Array.isArray(data[key])) {
-                deserialized[key] = data[key]
             }
         }
 
         return deserialized;
+    }
+
+    if (
+        typeof serialized == "string" ||
+        typeof serialized == "number" ||
+        typeof serialized == "bigint" ||
+        typeof serialized == "boolean" ||
+        typeof serialized == "undefined" ||
+        !serialized
+    ) {
+        return serialized
     }
 
     return recurse(serialized);
@@ -46,7 +66,7 @@ if (!isMainThread && parentPort) {
         pluginVM = new NodeVM({
             require: {
                 mock: {
-                    "../src/plugin/index.js": {
+                    "../src/plugin/index.js": Object.freeze({
                         defineCommand: function (command: Command) {
                             const id = createHash("sha256").update(randomBytes(256)).digest("hex");
                             commands.push({
@@ -67,11 +87,11 @@ if (!isMainThread && parentPort) {
                                 commands
                             };
                         }
-                    }
+                    })
                 }
             }
         });
-    } catch(err) {
+    } catch (err) {
         console.log(err);
     }
 
@@ -84,9 +104,13 @@ if (!isMainThread && parentPort) {
         commands: ExpandedCommand[]
     } = { ...pluginVM.runFile(workerData.pluginPath).default, commands };
 
-    console.log(pluginRuntime);
-
     parentPort.on("message", (payload) => {
+        if (payload.id && awaiting.has(payload.id)) {
+            awaiting.get(payload.id)?.(payload.data)
+            awaiting.delete(payload.id)
+            return;
+        }
+
         if (payload.target) {
             let target: Command | undefined = undefined;
             if (payload.target.type == "command")
