@@ -31,7 +31,7 @@ function serialize(data: Record<string, any>) {
 }
 
 export function wrap(pluginPath: string): Promise<Plugin | null> {
-    const worker = new Worker(path.join(process.cwd(), "dist", "src-dist", "wrapper", "child.js"), {
+    let worker = new Worker(path.join(process.cwd(), "dist", "src-dist", "wrapper", "child.js"), {
         workerData: {
             pluginPath
         }
@@ -40,8 +40,15 @@ export function wrap(pluginPath: string): Promise<Plugin | null> {
     let mappedFunctions: Record<string, CallableFunction> = {};
 
     return new Promise((resolve, reject) => {
+        let timeout = setTimeout(() => {
+            worker.terminate();
+            worker.unref();
+            reject(new Error("Timed out!"))
+        }, 5000)
+
         worker.on("message", (payload) => {
             if (payload.id == 0) {
+                clearTimeout(timeout);
                 resolve({
                     ...payload.data,
                     commands: payload.data.commands.map((c: any) => ({
@@ -49,7 +56,7 @@ export function wrap(pluginPath: string): Promise<Plugin | null> {
                         description: c.description,
                         run(interaction: Interaction) {
                             let { cloned, functions } = serialize(interaction);
-                            
+
                             mappedFunctions = {
                                 ...mappedFunctions,
                                 ...functions
@@ -68,6 +75,15 @@ export function wrap(pluginPath: string): Promise<Plugin | null> {
                         }
                     }))
                 })
+            } else {
+                if ("target" in payload) {
+                    let target: CallableFunction | undefined;
+                    if (payload.target.type == "method") {
+                        target = mappedFunctions[payload.target.id];
+                    }
+                    if (!target) return;
+                    target?.(payload.data);
+                }
             }
         })
 

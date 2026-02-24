@@ -2,6 +2,7 @@ export interface Command {
     name: string;
     description: string;
     run: (this: Plugin, interaction: Interaction) => void;
+    subcommands?: Command[];
 }
 
 export interface Interaction {

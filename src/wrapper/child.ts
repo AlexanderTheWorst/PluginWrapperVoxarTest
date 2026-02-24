@@ -13,16 +13,25 @@ function deserialize(serialized: Record<string, any>): any {
             if (typeof data[key] == "object") {
                 if ("type" in data[key]) {
                     deserialized[key] = (...args: any) => {
-                        console.log(args)
+                        parentPort?.postMessage({
+                            id: createHash("sha256").update(randomBytes(256)).digest("hex"),
+                            target: {
+                                id: data[key].id,
+                                type: "method",
+                            },
+                            data: args
+                        });
                     }
                 } else {
                     deserialized[key] = recurse(data[key])
                 }
             } else if (typeof data[key] == "string" || typeof data[key] == "number") {
                 deserialized[key] = data[key]
+            } else if (Array.isArray(data[key])) {
+                deserialized[key] = data[key]
             }
         }
-        
+
         return deserialized;
     }
 
@@ -32,38 +41,50 @@ function deserialize(serialized: Record<string, any>): any {
 if (!isMainThread && parentPort) {
     const commands: ExpandedCommand[] = []
 
-    const pluginVM = new NodeVM({
-        require: {
-            mock: {
-                "../src/plugin/index.js": {
-                    defineCommand: function (command: Command) {
-                        const id = createHash("sha256").update(randomBytes(256)).digest("hex");
-                        commands.push({
-                            ...command,
-                            id,
-                            serialize: () => {
-                                return {
-                                    name: command.name,
-                                    description: command.description,
-                                    id,
+    let pluginVM;
+    try {
+        pluginVM = new NodeVM({
+            require: {
+                mock: {
+                    "../src/plugin/index.js": {
+                        defineCommand: function (command: Command) {
+                            const id = createHash("sha256").update(randomBytes(256)).digest("hex");
+                            commands.push({
+                                ...command,
+                                id,
+                                serialize: () => {
+                                    return {
+                                        name: command.name,
+                                        description: command.description,
+                                        id,
+                                    }
                                 }
-                            }
-                        });
-                    },
-                    definePlugin: function (plugin: Plugin) {
-                        return {
-                            ...plugin,
-                            commands
-                        };
+                            });
+                        },
+                        definePlugin: function (plugin: Plugin) {
+                            return {
+                                ...plugin,
+                                commands
+                            };
+                        }
                     }
                 }
             }
-        }
-    })
+        });
+    } catch(err) {
+        console.log(err);
+    }
+
+    if (!pluginVM) throw parentPort.postMessage({
+        id: 0,
+        data: null
+    });
 
     const pluginRuntime: Plugin & {
         commands: ExpandedCommand[]
     } = { ...pluginVM.runFile(workerData.pluginPath).default, commands };
+
+    console.log(pluginRuntime);
 
     parentPort.on("message", (payload) => {
         if (payload.target) {
